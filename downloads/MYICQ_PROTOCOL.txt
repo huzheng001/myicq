@@ -1,0 +1,288 @@
+                                 MyICQ protocol v1
+                                -----------------
+
+----------------------
+1. General Information
+----------------------
+  The communication between client and server uses UDP transport protocol, and has the mechanism of timeout-resend, packet-duplicated detection, etc. After receiving a packet, the receiver should send an ACK packet to the sender. If after a few seconds the sender does not receive the ack, it will resend the corresponding packet. If after trying a few times it still fails, the sender will drop this packet.
+  Almost all packets from client to server is encrypted using DES algorithm with the user's password as the key.
+
+  If two clients can communicate directly, they will establish a tcp connection with each other. Otherwise, If this is a message session, the message will be sent through the server. If it is a file session(or chat session, etc), unfortunately, communication is impossible.
+
+
+--------------
+2. Convention
+--------------
+  BYTE 8-bit data
+  WORD 16-bit data
+  DWORD 32-bit data
+  STRING length + string
+
+  Any data in a packet is in net-order binary format, for example, if 5 is sent:
+  00 00 00 05, instead of 05 00 00 00, or the ascii of '5'
+
+  STRING is encoded as the length(including '\0') followed by the real NULL-terminated string.
+  for example, if 'freeman' is sent:
+  00 08 'f' 'r' 'e' 'e' 'm' 'a' 'n' 00
+
+
+--------
+3. UDP
+--------
+Every udp packet has a header. The format of a packet from client is as follows:
+
+field size discription
+-------------------------------------------
+version WORD Protocol version, 1 for now
+reserved DWORD Reserved, for forward compatiblity, always 0 for now
+uin DWORD Unique myICQ Number
+sid DWORD Every session is identified by a session ID to prevent from being spoofing
+it is randomly generated when the client logins.
+cmd WORD Command
+seq WORD The sequence number of this packet, the first sequence number in a session
+is randomly selected by client
+cc WORD Check Code. See below.
+
+The sender should calculate check code before encrypting this packet, and the receiver will check this field after decrypting it.
+Following are the steps to generate a checkcode:
+1) Randomly select a position(i) in the real data(after header)
+2) Get the byte value(v) at i.
+3) Compose the 16-bit checkcode with i as the higher byte and v as the lower byte
+
+The format of a packet from server is as follows:
+
+version WORD
+reserved DWORD
+uin DWORD
+sid DWORD
+cmd WORD
+seq WORD
+ackseq WORD The sequence number to be acked
+
+
+cmd from client to server can be:
+
+1) UDP_ACK
+ACK packet
+
+seq(in the header) is the sequence number to be acked
+
+2) UDP_NEW_UIN
+Register new user
+
+password STRING
+
+3) UDP_LOGIN
+Login
+
+password STRING
+status DWORD STATUS_ONLINE, STATUS_AWAY, etc
+tcp_version WORD p2p protocol version
+real_ip DWORD ip behind a firewall
+port WORD the port on which message session listens
+
+4) UDP_LOGOUT
+Logout from server
+
+5) UDP_GET_CONTACTLIST
+Fetch the contact list from server
+
+6) UDP_KEEPALIVE
+The client sends this command every few minutes, so that the server knows that we are still alive.
+
+7) UDP_CHANGE_STATUS
+Change status
+
+new_status DWORD New status, STATUS_AWAY, eg.
+
+8) UDP_UPDATE_CONTACT
+Update contact information
+
+uin DWORD the uin to be updated
+
+9) UDP_MODIFY_USER
+Modify the user information
+
+face BYTE
+nick STRING
+age BYTE
+gender BYTE
+country STRING
+province STRING
+city STRING
+email STRING
+address STRING
+zipcode STRING
+tel. STRING
+name STRING
+blood BYTE
+college STRING
+occupation STRING
+homepage STRING
+self-intro STRING
+auth BYTE see below
+is_modify_passwd BYTE 0 not modify, 1 modify
+password STRING only present if is_modify_passwd is 1
+
+auth can be the following values
+0 anyone can add me to their contact lists
+1 authorization is required
+2 none can add me to their contact lists
+
+10) UDP_UPDATE_USER
+Fetch our information from server
+
+11) UDP_SEND_MSG
+type BYTE the message type, see below
+to_uin DWORD the uin of the receiver
+text STRING message content
+
+There are many message types in MyICQ, each type has their own field. For this purpose, many fields are encoded in the text field.
+fields are separated by 0xff, which is a character that nerver used, i think.
+
+type can be the following values:
+
+type Description Text
+-------------------------------------------------------------------------------------
+MSG_TEXT Normal message NULL-terminated string
+MSG_AUTO_REPLY Auto reply message the same as MSG_TEXT
+MSG_AUTH_ACCEPTED request is accepted.    -
+MSG_AUTH_REQUEST add contact request.    face, 0xff, nick, 0xff, reason
+MSG_AUTH_REJECTED request is rejected.    reason
+MSG_ADDED user has added me to their contact list.    -
+MSG_TCP_REQUEST tcp session request.    session name(sendfile, eg.), 0xff, reason, 0xff, port
+MSG_TCP_ACCEPTED request is accepted.    session name, 0xff, port
+MSG_TCP_REJECTED request is rejected not implemented yet:-)
+
+12) UDP_SEARCH_RANDOM
+Search online users randomly
+
+13) UDP_SEARCH_CUSTOM
+Search users according to specific conditions
+
+uin DWORD
+nick STRING
+email STRING
+start_uin DWORD The minimum uin to be searched
+
+14) UDP_ADD_FRIEND
+Add a friend to contact list
+
+uin DWORD
+
+15) UDP_DEL_FRIEND
+Delete a friend from contact list
+
+uin DWORD
+
+16) UDP_BROADCAST_MSG
+type BYTE message type, see UDP_SEND_MSG
+text BYTE message content, see UDP_SEND_MSG
+
+
+cmd from server to client can be:
+
+1) UDP_SRV_USER_ONLINE
+Sent when one of our friend goes online
+
+uin DWORD
+status DWORD
+ip DWORD
+port WORD
+real_ip DWORD the ip behind firewall
+
+2) UDP_SRV_USER_OFFLINE
+Sent when one of our friend goes offline
+
+uin DWORD
+
+3) UDP_SRV_MULTI_ONLINE
+Sent when multiple friends go online, sent when we login
+
+num WORD number of friends are online
+uin DWORD             ----
+status DWORD             |
+ip DWORD                 |--- repeated num times
+port WORD                |
+real_ip DWORD         -----
+
+4) UDP_STATUS_CHANGED
+Sent when a friend changes its status
+
+uin DWORD
+status DWORD
+
+5) UDP_SRV_MESSAGE
+Sent when a message from a friend comes
+
+type BYTE
+from_uin DWORD
+time DWORD The time stamp
+text STRING
+
+6) UDP_SRV_SEARCH
+Reply from a previous UDP_SEARCH_RANDOM or UDP_SEARCH_CUSTOM
+
+num WORD number of users found
+uin DWORD                    -------
+online BYTE 1 - online, 0 - offline |
+face BYTE                           |---- repeated num times
+nick STRING                         |
+province STRING              -------
+
+7) UDP_NEW_UIN
+New user has registered
+
+uin DWORD if 0, the server encounter some error
+
+8) UDP_GET_CONTACTLIST
+
+num WORD number of contacts
+uin DWORD repeated num times
+
+9) UDP_LOGIN
+Login reply
+
+error BYTE LOGIN_SUCCESS, LOGIN_INVALID_UIN or LOGIN_WRONG_PASSWD
+ip DWORD our ip from the server's point of view, in case of NAT, this is different from our real ip
+
+10) UDP_KEEPALIVE
+
+num DWORD number of users currently online
+
+11) UDP_UPDATE_CONTACT
+
+uin DWORD
+The following fields are the same as UDP_MODIFY_USER
+
+12) UDP_UPDATE_USER
+
+All fields are the same as UDP_MODIFY_USER
+
+13) UDP_ADD_FRIEND
+Reply from a previous add friend packet
+
+uin DWORD
+result BYTE see below
+
+result can be the following values:
+
+ADD_FRIEND_ACCEPTED user has accepted your 'add friend' request
+ADD_FRIEND_AUTH_REQ authorization is required
+ADD_FRIEND_REJECTED user has rejected your request
+
+
+-----------
+4. TCP
+-----------
+Just like UDP packet above, every tcp packet also has a header:
+
+version WORD p2p version, 1 for now
+reserved DWORD
+cmd WORD tcp command
+uin DWORD
+face BYTE our face number
+
+When you want to establish a tcp session with a contact, first a MSG_TCP_REQUEST message is sent. If the remote accepted your request, he will send a MSG_TCP_ACCEPTED message. After that, you can connect to the port which MSG_TCP_ACCEPTED refers.
+
+When a new TCP connection is established, the one who makes the active call will send a hello packet. After that, it is the plugin's responsibility to send real data.
